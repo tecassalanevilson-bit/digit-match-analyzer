@@ -3,14 +3,11 @@ import {
   DerivClient,
   normalizeSymbols,
   pickSynthetics,
-  lastDigit as _unused,
   type ConnState,
   type DerivSymbol,
 } from "@/lib/deriv-api";
 import { lastDigit, computeDigitStats, scoreMatch, scoreDiffer } from "@/lib/digit-analysis";
 import { loadSignals, saveSignals, type SignalRecord } from "@/lib/backtest";
-
-void _unused;
 
 export const SAMPLE_OPTIONS = [50, 100, 300, 500, 1000, 2000];
 
@@ -94,7 +91,8 @@ export function useScanner() {
         const list = prices.map((p) => lastDigit(p, pip));
         digitsRef.current = list;
         setDigits(list);
-        if (prices.length) setLastPrice(prices[prices.length - 1].toFixed(pip));
+        const lastQuote = prices[prices.length - 1];
+        if (typeof lastQuote === "number") setLastPrice(lastQuote.toFixed(pip));
         stamp();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Falha ao obter histórico");
