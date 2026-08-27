@@ -59,6 +59,14 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-gold: var(--gold);
+  --color-gold-foreground: var(--gold-foreground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
 :root {
@@ -132,13 +140,69 @@
   --sidebar-ring: oklch(0.551 0.027 264.364);
 }
 
+/* Digit Scanner AI theme: dark violet base, gold accents, green/red states */
+:root,
+.dark {
+  --radius: 0.9rem;
+  --background: oklch(0.16 0.045 295);
+  --foreground: oklch(0.96 0.01 300);
+  --surface: oklch(0.21 0.05 295);
+  --surface-2: oklch(0.26 0.06 295);
+  --card: oklch(0.21 0.05 295);
+  --card-foreground: oklch(0.96 0.01 300);
+  --popover: oklch(0.21 0.05 295);
+  --popover-foreground: oklch(0.96 0.01 300);
+  --primary: oklch(0.62 0.21 300);
+  --primary-foreground: oklch(0.99 0.005 300);
+  --secondary: oklch(0.28 0.06 295);
+  --secondary-foreground: oklch(0.96 0.01 300);
+  --muted: oklch(0.26 0.05 295);
+  --muted-foreground: oklch(0.72 0.03 300);
+  --accent: oklch(0.83 0.16 88);
+  --accent-foreground: oklch(0.2 0.06 295);
+  --gold: oklch(0.83 0.16 88);
+  --gold-foreground: oklch(0.2 0.06 295);
+  --success: oklch(0.74 0.19 150);
+  --success-foreground: oklch(0.18 0.05 160);
+  --destructive: oklch(0.63 0.23 25);
+  --destructive-foreground: oklch(0.99 0.005 300);
+  --border: oklch(0.34 0.06 295);
+  --input: oklch(0.3 0.06 295);
+  --ring: oklch(0.62 0.21 300);
+  --chart-1: oklch(0.62 0.21 300);
+  --chart-2: oklch(0.83 0.16 88);
+  --chart-3: oklch(0.74 0.19 150);
+  --chart-4: oklch(0.63 0.23 25);
+  --chart-5: oklch(0.72 0.12 260);
+  --gradient-panel: linear-gradient(160deg, oklch(0.24 0.07 297), oklch(0.18 0.05 295));
+  --gradient-gold: linear-gradient(120deg, oklch(0.88 0.14 92), oklch(0.76 0.16 70));
+  --shadow-card: 0 8px 20px -12px oklch(0.08 0.05 295 / 0.8);
+}
+
+@utility panel {
+  background-image: var(--gradient-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+@utility tap-target {
+  min-height: 2.75rem;
+}
+
 @layer base {
   * {
     border-color: var(--color-border);
   }
 
+  html {
+    color-scheme: dark;
+  }
+
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
   }
 }
