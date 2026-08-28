@@ -158,3 +158,46 @@ export function pickSynthetics(all: DerivSymbol[]): DerivSymbol[] {
   const pool = synth.length ? synth : all;
   return pool.sort((a, b) => volRank(a) - volRank(b) || a.name.localeCompare(b.name, "pt"));
 }
+
+/**
+ * Fallback discovery: when active_symbols comes back empty (some regions/app
+ * contexts return an empty list), probe candidate synthetic codes with
+ * ticks_history and keep only the ones the API actually answers for.
+ * Nothing is assumed valid — every symbol here is confirmed live by the API.
+ */
+const FALLBACK_CANDIDATES: Array<{ symbol: string; name: string }> = [
+  { symbol: "R_10", name: "Volatility 10 Index" },
+  { symbol: "R_25", name: "Volatility 25 Index" },
+  { symbol: "R_50", name: "Volatility 50 Index" },
+  { symbol: "R_75", name: "Volatility 75 Index" },
+  { symbol: "R_100", name: "Volatility 100 Index" },
+  { symbol: "1HZ10V", name: "Volatility 10 (1s) Index" },
+  { symbol: "1HZ25V", name: "Volatility 25 (1s) Index" },
+  { symbol: "1HZ50V", name: "Volatility 50 (1s) Index" },
+  { symbol: "1HZ75V", name: "Volatility 75 (1s) Index" },
+  { symbol: "1HZ100V", name: "Volatility 100 (1s) Index" },
+];
+
+export async function probeSynthetics(client: DerivClient): Promise<DerivSymbol[]> {
+  const results = await Promise.all(
+    FALLBACK_CANDIDATES.map(async (c) => {
+      try {
+        const res = await client.request<{ pip_size?: number; history?: unknown }>(
+          { ticks_history: c.symbol, count: 1, end: "latest", style: "ticks" },
+          10000,
+        );
+        if (!res.history) return null;
+        return {
+          symbol: c.symbol,
+          name: c.name,
+          type: "synthetic_index",
+          pipSize: typeof res.pip_size === "number" ? res.pip_size : 2,
+          market: "synthetic_index",
+        } satisfies DerivSymbol;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return results.filter((r): r is DerivSymbol => r !== null);
+}
