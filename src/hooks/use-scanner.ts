@@ -3,6 +3,7 @@ import {
   DerivClient,
   normalizeSymbols,
   pickSynthetics,
+  probeSynthetics,
   type ConnState,
   type DerivSymbol,
 } from "@/lib/deriv-api";
@@ -124,7 +125,8 @@ export function useScanner() {
           product_type: "basic",
         });
         const all = normalizeSymbols((res.active_symbols ?? []) as never[]);
-        const synth = pickSynthetics(all);
+        let synth = pickSynthetics(all);
+        if (synth.length === 0) synth = await probeSynthetics(client);
         setSymbols(synth);
         setSymbol((prev) => prev || (synth[0]?.symbol ?? ""));
       } catch (e) {
