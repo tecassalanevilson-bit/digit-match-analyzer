@@ -7,10 +7,23 @@ import {
   type ConnState,
   type DerivSymbol,
 } from "@/lib/deriv-api";
-import { lastDigit, computeDigitStats, scoreMatch, scoreDiffer } from "@/lib/digit-analysis";
+import { getLastDigit, computeDigitStats, scoreMatch, scoreDiffer } from "@/lib/digit-analysis";
 import { loadSignals, saveSignals, type SignalRecord } from "@/lib/backtest";
 
 export const SAMPLE_OPTIONS = [50, 100, 300, 500, 1000, 2000];
+
+export interface LiveDiagnostics {
+  symbol: string;
+  pipSize: number;
+  lastQuote: string;
+  lastDigit: string;
+  lastEpoch: string;
+  received: number;
+  lastTickTime: string;
+}
+
+const fmtTime = (ms: number) =>
+  new Date(ms).toLocaleTimeString("pt-PT", { hour12: false });
 
 export function useScanner() {
   const [conn, setConn] = useState<ConnState>("CONECTANDO");
@@ -26,18 +39,40 @@ export function useScanner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signals, setSignals] = useState<SignalRecord[]>([]);
+  const [pipSize, setPipSize] = useState(2);
+  const [diag, setDiag] = useState<LiveDiagnostics>({
+    symbol: "—",
+    pipSize: 2,
+    lastQuote: "—",
+    lastDigit: "—",
+    lastEpoch: "—",
+    received: 0,
+    lastTickTime: "—",
+  });
+  const [tickStale, setTickStale] = useState(false);
 
   const clientRef = useRef<DerivClient | null>(null);
   const pipRef = useRef(2);
+  const symbolRef = useRef("");
   const subRef = useRef<string | null>(null);
+  const subIdRef = useRef<string | null>(null);
   const digitsRef = useRef<number[]>([]);
+  const lastEpochRef = useRef<number | null>(null);
+  const tickCountRef = useRef(0);
+  const lastTickMsRef = useRef(0);
   const pendingRef = useRef<SignalRecord | null>(null);
   const cooldownRef = useRef(0);
+  const sampleRef = useRef(sample);
+  const liveRef = useRef(live);
 
-  const stamp = () =>
-    setLastUpdate(
-      new Date().toLocaleTimeString("pt-PT", { hour12: false, timeZone: undefined }),
-    );
+  useEffect(() => {
+    sampleRef.current = sample;
+  }, [sample]);
+  useEffect(() => {
+    liveRef.current = live;
+  }, [live]);
+
+  const stamp = () => setLastUpdate(fmtTime(Date.now()));
 
   const current = useMemo(() => symbols.find((s) => s.symbol === symbol), [symbols, symbol]);
 
@@ -45,76 +80,106 @@ export function useScanner() {
     setSignals(loadSignals());
   }, []);
 
-  const pushDigit = useCallback(
-    (d: number, size: number) => {
-      const next = [...digitsRef.current, d];
-      if (next.length > size) next.splice(0, next.length - size);
-      digitsRef.current = next;
-      setDigits(next);
-      // Resolve pending backtest signal against this brand-new tick
-      const pending = pendingRef.current;
-      if (pending) {
-        pendingRef.current = null;
-        const hit = pending.mode === "MATCH" ? d === pending.digit : d !== pending.digit;
-        setSignals((prev) => {
-          const updated = prev.map((s) =>
-            s.id === pending.id
-              ? { ...s, result: hit ? ("ACERTO" as const) : ("ERRO" as const), resultDigit: d }
-              : s,
-          );
-          saveSignals(updated);
-          return updated;
-        });
-      }
-    },
-    [],
-  );
+  const pushDigit = useCallback((d: number, size: number) => {
+    const next = [...digitsRef.current, d];
+    if (next.length > size) next.splice(0, next.length - size);
+    digitsRef.current = next;
+    setDigits(next);
+    const pending = pendingRef.current;
+    if (pending) {
+      pendingRef.current = null;
+      const hit = pending.mode === "MATCH" ? d === pending.digit : d !== pending.digit;
+      setSignals((prev) => {
+        const updated = prev.map((s) =>
+          s.id === pending.id
+            ? { ...s, result: hit ? ("ACERTO" as const) : ("ERRO" as const), resultDigit: d }
+            : s,
+        );
+        saveSignals(updated);
+        return updated;
+      });
+    }
+  }, []);
 
-  const loadHistory = useCallback(
-    async (sym: string, size: number) => {
-      const client = clientRef.current;
-      if (!client || !client.ready || !sym) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await client.request<{
-          history?: { prices: number[]; times: number[] };
-          pip_size?: number;
-        }>({
-          ticks_history: sym,
-          adjust_start_time: 1,
-          count: size,
-          end: "latest",
-          style: "ticks",
-        });
-        const prices = res.history?.prices ?? [];
-        const pip = pipRef.current;
-        const list = prices.map((p) => lastDigit(p, pip));
-        digitsRef.current = list;
-        setDigits(list);
-        const lastQuote = prices[prices.length - 1];
-        if (typeof lastQuote === "number") setLastPrice(lastQuote.toFixed(pip));
-        stamp();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Falha ao obter histórico");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
+  const loadHistory = useCallback(async (sym: string, size: number) => {
+    const client = clientRef.current;
+    if (!client || !client.ready || !sym) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await client.request<{
+        history?: { prices: number[]; times: number[] };
+        pip_size?: number;
+        echo_req?: { ticks_history?: string };
+      }>({
+        ticks_history: sym,
+        adjust_start_time: 1,
+        count: size,
+        end: "latest",
+        style: "ticks",
+      });
+      // Ignore late answers for a symbol the user already left
+      if (symbolRef.current !== sym) return;
+      // Authoritative precision for this symbol comes from the API response
+      const pip = typeof res.pip_size === "number" ? res.pip_size : pipRef.current;
+      pipRef.current = pip;
+      setPipSize(pip);
+      const prices = res.history?.prices ?? [];
+      const times = res.history?.times ?? [];
+      const list = prices.map((p) => getLastDigit(p, pip));
+      digitsRef.current = list;
+      setDigits(list);
+      lastEpochRef.current = times.length ? times[times.length - 1] : null;
+      const lastQuote = prices[prices.length - 1];
+      if (typeof lastQuote === "number") setLastPrice(lastQuote.toFixed(pip));
+      stamp();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao obter histórico");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  // Connection + symbols
+  // Connection + symbols + single tick handler
   useEffect(() => {
     const client = new DerivClient((s) => setConn(s));
     clientRef.current = client;
 
     const off = client.onMessage((msg) => {
-      const tick = (msg as { tick?: { quote: number; symbol?: string } }).tick;
-      if (!tick) return;
+      const m = msg as {
+        msg_type?: string;
+        tick?: { quote: number; symbol?: string; epoch?: number; id?: string; pip_size?: number };
+      };
+      if (m.msg_type !== "tick" || !m.tick) return;
+      const tick = m.tick;
+      // One single source of data: ignore anything not from the selected symbol
+      if (tick.symbol && symbolRef.current && tick.symbol !== symbolRef.current) return;
+      if (tick.id) subIdRef.current = tick.id;
+      if (typeof tick.pip_size === "number" && tick.pip_size !== pipRef.current) {
+        pipRef.current = tick.pip_size;
+        setPipSize(tick.pip_size);
+      }
+      // Never add the same tick twice
+      if (typeof tick.epoch === "number" && lastEpochRef.current === tick.epoch) return;
+      if (typeof tick.epoch === "number") lastEpochRef.current = tick.epoch;
+
       const pip = pipRef.current;
-      setLastPrice(tick.quote.toFixed(pip));
-      pushDigit(lastDigit(tick.quote, pip), sampleRef.current);
+      const formatted = tick.quote.toFixed(pip);
+      const d = getLastDigit(tick.quote, pip);
+      setLastPrice(formatted);
+      pushDigit(d, sampleRef.current);
+      tickCountRef.current += 1;
+      lastTickMsRef.current = Date.now();
+      setTickStale(false);
+      setDiag({
+        symbol: tick.symbol ?? symbolRef.current,
+        pipSize: pip,
+        lastQuote: formatted,
+        lastDigit: String(d),
+        lastEpoch: tick.epoch != null ? String(tick.epoch) : "—",
+        received: tickCountRef.current,
+        lastTickTime: fmtTime(lastTickMsRef.current),
+      });
       stamp();
     });
 
@@ -134,10 +199,6 @@ export function useScanner() {
       }
     };
 
-    const offState = client.onMessage((msg) => {
-      if ((msg as { msg_type?: string }).msg_type) return;
-    });
-
     let started = false;
     const poll = setInterval(() => {
       if (client.ready && !started) {
@@ -150,38 +211,69 @@ export function useScanner() {
     return () => {
       clearInterval(poll);
       off();
-      offState();
       client.close();
       clientRef.current = null;
     };
   }, [pushDigit]);
 
-  const sampleRef = useRef(sample);
+  // Symbol change: drop old data + subscription before anything else
   useEffect(() => {
-    sampleRef.current = sample;
-  }, [sample]);
+    symbolRef.current = symbol;
+    const client = clientRef.current;
+    if (subRef.current && subRef.current !== symbol) {
+      if (subIdRef.current) client?.send({ forget: subIdRef.current });
+      else client?.send({ forget_all: "ticks" });
+      subRef.current = null;
+      subIdRef.current = null;
+    }
+    digitsRef.current = [];
+    setDigits([]);
+    lastEpochRef.current = null;
+    tickCountRef.current = 0;
+    setLastPrice("—");
+    const sym = symbols.find((s) => s.symbol === symbol);
+    if (sym) {
+      pipRef.current = sym.pipSize;
+      setPipSize(sym.pipSize);
+    }
+  }, [symbol, symbols]);
 
   // Reload history when symbol / sample changes (and after reconnection)
   useEffect(() => {
     if (!symbol || conn !== "CONECTADO") return;
-    const sym = symbols.find((s) => s.symbol === symbol);
-    pipRef.current = sym?.pipSize ?? 2;
     void loadHistory(symbol, sample);
-  }, [symbol, sample, conn, symbols, loadHistory]);
+  }, [symbol, sample, conn, loadHistory]);
 
-  // Live subscription
+  // Live subscription (kept in sync with the selected symbol)
   useEffect(() => {
     const client = clientRef.current;
     if (!client) return;
-    if (subRef.current && (!live || subRef.current !== symbol || conn !== "CONECTADO")) {
-      client.send({ forget_all: "ticks" });
+    const shouldSub = live && !!symbol && conn === "CONECTADO";
+    if (subRef.current && (!shouldSub || subRef.current !== symbol)) {
+      if (subIdRef.current) client.send({ forget: subIdRef.current });
+      else client.send({ forget_all: "ticks" });
       subRef.current = null;
+      subIdRef.current = null;
     }
-    if (live && symbol && conn === "CONECTADO") {
+    if (shouldSub && subRef.current !== symbol) {
       client.send({ ticks: symbol, subscribe: 1 });
       subRef.current = symbol;
+      lastTickMsRef.current = Date.now();
+      setTickStale(false);
     }
   }, [live, symbol, conn]);
+
+  // Stale-tick watchdog
+  useEffect(() => {
+    if (!live) {
+      setTickStale(false);
+      return;
+    }
+    const t = setInterval(() => {
+      setTickStale(Date.now() - lastTickMsRef.current > 5000);
+    }, 1000);
+    return () => clearInterval(t);
+  }, [live]);
 
   const stats = useMemo(() => computeDigitStats(digits), [digits]);
   const matchRanking = useMemo(
@@ -193,27 +285,24 @@ export function useScanner() {
     [stats, digits.length],
   );
 
-  const registerSignal = useCallback(
-    (rec: Omit<SignalRecord, "id" | "time" | "result">) => {
-      if (pendingRef.current) return;
-      const now = Date.now();
-      if (now - cooldownRef.current < 4000) return;
-      cooldownRef.current = now;
-      const record: SignalRecord = {
-        ...rec,
-        id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
-        time: now,
-        result: "PENDENTE",
-      };
-      pendingRef.current = record;
-      setSignals((prev) => {
-        const updated = [...prev, record];
-        saveSignals(updated);
-        return updated;
-      });
-    },
-    [],
-  );
+  const registerSignal = useCallback((rec: Omit<SignalRecord, "id" | "time" | "result">) => {
+    if (pendingRef.current) return;
+    const now = Date.now();
+    if (now - cooldownRef.current < 4000) return;
+    cooldownRef.current = now;
+    const record: SignalRecord = {
+      ...rec,
+      id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
+      time: now,
+      result: "PENDENTE",
+    };
+    pendingRef.current = record;
+    setSignals((prev) => {
+      const updated = [...prev, record];
+      saveSignals(updated);
+      return updated;
+    });
+  }, []);
 
   const clearSignals = useCallback(() => {
     pendingRef.current = null;
@@ -251,5 +340,8 @@ export function useScanner() {
     signals,
     registerSignal,
     clearSignals,
+    pipSize,
+    diag,
+    tickStale,
   };
 }
