@@ -213,6 +213,38 @@ function Index() {
         >
           {s.live ? "⏹ PARAR" : "🟢 LIVE"}
         </button>
+        <p
+          className={cn(
+            "mt-2 rounded-md px-3 py-2 text-center font-mono text-[11px] font-bold",
+            !s.live
+              ? "bg-destructive/15 text-destructive"
+              : s.tickStale
+                ? "bg-gold/15 text-gold"
+                : "bg-success/15 text-success",
+          )}
+        >
+          {!s.live
+            ? "🔴 LIVE PARADO"
+            : s.tickStale
+              ? "⚠️ SEM TICKS RECENTES"
+              : "🟢 LIVE ATIVO · NORMAL"}
+          {" · último tick: "}
+          {s.diag.lastTickTime}
+          {s.live ? ` · fonte: ${s.liveSource}` : ""}
+        </p>
+      </Card>
+
+      <Card title="Diagnóstico LIVE" icon="🧪">
+        <div className="grid grid-cols-2 gap-2">
+          <Stat label="Símbolo" value={s.diag.symbol} />
+          <Stat label="Pip size" value={String(s.pipSize)} />
+          <Stat label="Último preço recebido" value={s.diag.lastQuote} />
+          <Stat label="Último dígito calculado" value={s.diag.lastDigit} tone="text-gold" />
+          <Stat label="Último epoch" value={s.diag.lastEpoch} />
+          <Stat label="Ticks recebidos (LIVE)" value={String(s.diag.received)} />
+          <Stat label="Último tick recebido" value={s.diag.lastTickTime} />
+          <Stat label="Precisão (casas)" value={String(s.pipSize)} />
+        </div>
       </Card>
 
       <Card title="Últimos 20 dígitos" icon="🔢">

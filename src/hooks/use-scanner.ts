@@ -50,6 +50,8 @@ export function useScanner() {
     lastTickTime: "—",
   });
   const [tickStale, setTickStale] = useState(false);
+  const [liveSource, setLiveSource] = useState<"SUBSCRICAO" | "SONDAGEM">("SUBSCRICAO");
+  const fallbackRef = useRef(false);
 
   const clientRef = useRef<DerivClient | null>(null);
   const pipRef = useRef(2);
@@ -101,6 +103,41 @@ export function useScanner() {
     }
   }, []);
 
+  /** Única porta de entrada de ticks (LIVE por subscrição ou sondagem). */
+  const ingestTick = useCallback(
+    (quote: number, epoch?: number, tickSymbol?: string, tickPip?: number) => {
+      // Uma única fonte de dados: ignorar o que não é do símbolo selecionado
+      if (tickSymbol && symbolRef.current && tickSymbol !== symbolRef.current) return;
+      if (typeof tickPip === "number" && tickPip !== pipRef.current) {
+        pipRef.current = tickPip;
+        setPipSize(tickPip);
+      }
+      // Nunca adicionar o mesmo tick duas vezes
+      if (typeof epoch === "number" && lastEpochRef.current === epoch) return;
+      if (typeof epoch === "number") lastEpochRef.current = epoch;
+
+      const pip = pipRef.current;
+      const formatted = quote.toFixed(pip);
+      const d = getLastDigit(quote, pip);
+      setLastPrice(formatted);
+      pushDigit(d, sampleRef.current);
+      tickCountRef.current += 1;
+      lastTickMsRef.current = Date.now();
+      setTickStale(false);
+      setDiag({
+        symbol: tickSymbol ?? symbolRef.current,
+        pipSize: pip,
+        lastQuote: formatted,
+        lastDigit: String(d),
+        lastEpoch: epoch != null ? String(epoch) : "—",
+        received: tickCountRef.current,
+        lastTickTime: fmtTime(lastTickMsRef.current),
+      });
+      stamp();
+    },
+    [pushDigit],
+  );
+
   const loadHistory = useCallback(async (sym: string, size: number) => {
     const client = clientRef.current;
     if (!client || !client.ready || !sym) return;
@@ -129,7 +166,8 @@ export function useScanner() {
       const list = prices.map((p) => getLastDigit(p, pip));
       digitsRef.current = list;
       setDigits(list);
-      lastEpochRef.current = times.length ? times[times.length - 1] : null;
+      const lastTime = times.length ? times[times.length - 1] : undefined;
+      lastEpochRef.current = typeof lastTime === "number" ? lastTime : null;
       const lastQuote = prices[prices.length - 1];
       if (typeof lastQuote === "number") setLastPrice(lastQuote.toFixed(pip));
       stamp();
@@ -148,39 +186,20 @@ export function useScanner() {
     const off = client.onMessage((msg) => {
       const m = msg as {
         msg_type?: string;
+        error?: { code?: string };
+        echo_req?: { ticks?: string };
         tick?: { quote: number; symbol?: string; epoch?: number; id?: string; pip_size?: number };
       };
+      // Subscription rejected (some regions/app contexts) → keep LIVE alive by polling
+      if (m.msg_type === "tick" && m.error && m.echo_req?.ticks) {
+        fallbackRef.current = true;
+        setLiveSource("SONDAGEM");
+        return;
+      }
       if (m.msg_type !== "tick" || !m.tick) return;
       const tick = m.tick;
-      // One single source of data: ignore anything not from the selected symbol
-      if (tick.symbol && symbolRef.current && tick.symbol !== symbolRef.current) return;
       if (tick.id) subIdRef.current = tick.id;
-      if (typeof tick.pip_size === "number" && tick.pip_size !== pipRef.current) {
-        pipRef.current = tick.pip_size;
-        setPipSize(tick.pip_size);
-      }
-      // Never add the same tick twice
-      if (typeof tick.epoch === "number" && lastEpochRef.current === tick.epoch) return;
-      if (typeof tick.epoch === "number") lastEpochRef.current = tick.epoch;
-
-      const pip = pipRef.current;
-      const formatted = tick.quote.toFixed(pip);
-      const d = getLastDigit(tick.quote, pip);
-      setLastPrice(formatted);
-      pushDigit(d, sampleRef.current);
-      tickCountRef.current += 1;
-      lastTickMsRef.current = Date.now();
-      setTickStale(false);
-      setDiag({
-        symbol: tick.symbol ?? symbolRef.current,
-        pipSize: pip,
-        lastQuote: formatted,
-        lastDigit: String(d),
-        lastEpoch: tick.epoch != null ? String(tick.epoch) : "—",
-        received: tickCountRef.current,
-        lastTickTime: fmtTime(lastTickMsRef.current),
-      });
-      stamp();
+      ingestTick(tick.quote, tick.epoch, tick.symbol, tick.pip_size);
     });
 
     const bootstrap = async () => {
@@ -214,7 +233,7 @@ export function useScanner() {
       client.close();
       clientRef.current = null;
     };
-  }, [pushDigit]);
+  }, [ingestTick]);
 
   // Symbol change: drop old data + subscription before anything else
   useEffect(() => {
@@ -262,6 +281,33 @@ export function useScanner() {
       setTickStale(false);
     }
   }, [live, symbol, conn]);
+
+  // LIVE por sondagem: usado quando a subscrição de ticks é rejeitada
+  useEffect(() => {
+    if (!live || !symbol || conn !== "CONECTADO") return;
+    let cancelled = false;
+    const tick = async () => {
+      const client = clientRef.current;
+      if (cancelled || !fallbackRef.current || !client?.ready) return;
+      try {
+        const res = await client.request<{
+          history?: { prices: number[]; times: number[] };
+          pip_size?: number;
+        }>({ ticks_history: symbol, count: 1, end: "latest", style: "ticks" }, 8000);
+        if (cancelled || symbolRef.current !== symbol) return;
+        const price = res.history?.prices?.[0];
+        const epoch = res.history?.times?.[0];
+        if (typeof price === "number") ingestTick(price, epoch, symbol, res.pip_size);
+      } catch {
+        /* mantém a sondagem; a próxima iteração tenta novamente */
+      }
+    };
+    const t = setInterval(() => void tick(), 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [live, symbol, conn, ingestTick]);
 
   // Stale-tick watchdog
   useEffect(() => {
@@ -343,5 +389,6 @@ export function useScanner() {
     pipSize,
     diag,
     tickStale,
+    liveSource,
   };
 }

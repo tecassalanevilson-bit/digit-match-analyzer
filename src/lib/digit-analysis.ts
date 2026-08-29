@@ -38,7 +38,8 @@ export interface Candidate extends DigitStats {
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
-export function lastDigit(price: string | number, pipSize: number): number {
+/** Única função de cálculo do último dígito (histórico e LIVE). */
+export function getLastDigit(price: string | number, pipSize: number): number {
   const s = typeof price === "number" ? price.toFixed(pipSize) : price;
   const clean = s.replace(/[^0-9]/g, "");
   return clean.length ? Number(clean[clean.length - 1]) : 0;
