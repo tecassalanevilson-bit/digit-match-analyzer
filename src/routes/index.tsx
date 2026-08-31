@@ -86,6 +86,8 @@ function Index() {
       score: top.score,
       window: s.digits.length,
       condition,
+      price: s.lastPrice,
+      signalDigit: s.digits[s.digits.length - 1],
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.live, s.digits.length, top?.digit, top?.score, condition, s.mode]);
@@ -227,10 +229,11 @@ function Index() {
             ? "🔴 LIVE PARADO"
             : s.tickStale
               ? "⚠️ SEM TICKS RECENTES"
-              : "🟢 LIVE ATIVO · NORMAL"}
+              : s.liveSource === "SUBSCRICAO"
+                ? "🟢 LIVE ATIVO — Deriv WebSocket"
+                : "🟢 LIVE ATIVO — Deriv WebSocket (sondagem de contingência)"}
           {" · último tick: "}
           {s.diag.lastTickTime}
-          {s.live ? ` · fonte: ${s.liveSource}` : ""}
         </p>
       </Card>
 
@@ -264,7 +267,11 @@ function Index() {
                 <p className="font-mono text-lg font-bold">{top.score}/100</p>
                 <p className={cn("text-sm font-bold", conditionTone(condition))}>
                   {conditionDot(condition)}{" "}
-                  {condition === "AGUARDAR" ? "AGUARDAR" : `CONDIÇÃO ${condition}`}
+                  {condition === "AGUARDAR"
+                    ? "AGUARDAR"
+                    : condition === "FORTE"
+                      ? "SINAL FORTE"
+                      : "SINAL MODERADO"}
                 </p>
               </div>
             </div>
@@ -351,11 +358,22 @@ function Index() {
           <Stat label="Acertos" value={String(agg.hits)} tone="text-success" />
           <Stat label="Erros" value={String(agg.misses)} tone="text-destructive" />
         </div>
-        <p className="mt-2 font-mono text-lg font-bold">
-          Taxa de acerto: {agg.total ? `${agg.rate.toFixed(1)}%` : "—"}
-        </p>
+        {agg.reliable ? (
+          <p className="mt-2 font-mono text-lg font-bold">
+            Taxa de acerto: {agg.rate.toFixed(1)}%
+          </p>
+        ) : (
+          <p className="mt-2 rounded-md bg-gold/15 px-3 py-2 font-mono text-sm font-bold text-gold">
+            AMOSTRA INSUFICIENTE — {agg.total} sinais
+            <span className="block text-[11px] font-normal text-muted-foreground">
+              Taxa provisória {agg.total ? `${agg.rate.toFixed(1)}%` : "—"} · faltam {agg.missing}{" "}
+              sinais para {100} avaliados
+            </span>
+          </p>
+        )}
         <p className="text-[11px] text-muted-foreground">
-          Calculada apenas com resultados reais verificados no tick seguinte ao sinal.
+          Calculada apenas com resultados reais verificados no tick seguinte ao sinal — nenhum
+          resultado é simulado.
         </p>
         <button
           type="button"
@@ -442,6 +460,10 @@ function Index() {
                   {r.mode === "MATCH" ? "🎯" : "🚫"} {r.digit}
                 </span>
                 <span>{r.score}</span>
+                <span className="text-muted-foreground">{r.price ?? "—"}</span>
+                <span className="text-muted-foreground">
+                  {r.signalDigit ?? "—"}→{r.resultDigit ?? "?"}
+                </span>
                 <span
                   className={
                     r.result === "ACERTO"
