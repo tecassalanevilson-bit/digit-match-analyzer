@@ -36,6 +36,8 @@ export interface Candidate extends DigitStats {
   reasons: string[];
 }
 
+export const SCORE_CAP = 79;
+
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
 /** Única função de cálculo do último dígito (histórico e LIVE). */
@@ -163,7 +165,9 @@ export function scoreMatch(s: DigitStats, sampleSize: number): Candidate {
 
   return {
     ...s,
-    score: Math.round(clamp(score, 0, 100)),
+    // Hard cap: an internal statistical score is never presented as 80%+
+    // "confidence" without historical validation of real results.
+    score: Math.round(clamp(score, 0, SCORE_CAP)),
     breakdown: {
       frequency: Math.round(frequency),
       recent: Math.round(recent),
@@ -211,7 +215,9 @@ export function scoreDiffer(s: DigitStats, sampleSize: number): Candidate {
 
   return {
     ...s,
-    score: Math.round(clamp(score, 0, 100)),
+    // Hard cap: an internal statistical score is never presented as 80%+
+    // "confidence" without historical validation of real results.
+    score: Math.round(clamp(score, 0, SCORE_CAP)),
     breakdown: {
       frequency: Math.round(frequency),
       recent: Math.round(recent),
@@ -233,6 +239,12 @@ export function confirmations(c: Candidate, mode: "MATCH" | "DIFFER"): number {
   return wins;
 }
 
+/**
+ * Rigorous gate. MATCH is never produced just because a digit sits above the
+ * 10% average: every criterion below must hold (recent + historic frequency,
+ * gap, streak, cross-window stability, minimum sample, frequency trend and
+ * multi-window confirmation). Anything short of that is AGUARDAR.
+ */
 export function conditionOf(
   c: Candidate | undefined,
   mode: "MATCH" | "DIFFER",
@@ -240,13 +252,46 @@ export function conditionOf(
   sampleSize: number,
   connected: boolean,
 ): Condition {
-  if (!c) return "AGUARDAR";
-  const minScore = conservative ? 75 : 60;
-  const conf = confirmations(c, mode);
-  if (!connected || sampleSize < 50) return "AGUARDAR";
+  if (!c || !connected) return "AGUARDAR";
+
+  const minSample = conservative ? 300 : 100;
+  if (sampleSize < minSample) return "AGUARDAR";
   if (c.conflict && conservative) return "AGUARDAR";
-  if (conf < 2) return "AGUARDAR";
-  if (c.score >= 75 && conf >= 2) return "FORTE";
-  if (c.score >= minScore) return conservative ? "FORTE" : "MODERADA";
-  return "AGUARDAR";
+
+  const conf = confirmations(c, mode);
+
+  if (mode === "MATCH") {
+    const historic = c.pctTotal >= (conservative ? 11 : 10.5);
+    const recent = c.pct50 >= 10.5 && c.pct20 >= 10;
+    const gapOk = c.gap <= (conservative ? 15 : 25);
+    const streakOk = c.maxStreak >= 2;
+    const stable = c.stability >= (conservative ? 0.55 : 0.4);
+    const trendOk = c.trend !== "DESCENDO";
+    const checks = [historic, recent, gapOk, streakOk, stable, trendOk];
+    const passed = checks.filter(Boolean).length;
+
+    if (!historic || !recent) return "AGUARDAR";
+    if (conf < (conservative ? 3 : 2)) return "AGUARDAR";
+    if (conservative && passed < 6) return "AGUARDAR";
+    if (!conservative && passed < 4) return "AGUARDAR";
+    if (c.score >= 70 && conf === 3 && passed === 6) return "FORTE";
+    return conservative ? "AGUARDAR" : "MODERADA";
+  }
+
+  // DIFFER
+  const lowHistoric = c.pctTotal <= (conservative ? 9 : 9.5);
+  const lowRecent = c.pct50 <= 9.5 && c.pct20 <= 10;
+  const noStreak = c.currentStreak === 0;
+  const stable = c.stability >= (conservative ? 0.5 : 0.35);
+  const trendOk = c.trend !== "SUBINDO";
+  const checks = [lowHistoric, lowRecent, noStreak, stable, trendOk];
+  const passed = checks.filter(Boolean).length;
+
+  if (!lowHistoric || !lowRecent) return "AGUARDAR";
+  if (conf < (conservative ? 3 : 2)) return "AGUARDAR";
+  if (conservative && passed < 5) return "AGUARDAR";
+  if (!conservative && passed < 3) return "AGUARDAR";
+  if (c.score >= 70 && conf === 3 && passed === 5) return "FORTE";
+  return conservative ? "AGUARDAR" : "MODERADA";
 }
+

@@ -198,7 +198,12 @@ export function useScanner() {
       }
       if (m.msg_type !== "tick" || !m.tick) return;
       const tick = m.tick;
-      if (tick.id) subIdRef.current = tick.id;
+      if (tick.id) {
+        subIdRef.current = tick.id;
+        // A tick carrying a subscription id proves the real `ticks` stream is on
+        fallbackRef.current = false;
+        setLiveSource("SUBSCRICAO");
+      }
       ingestTick(tick.quote, tick.epoch, tick.symbol, tick.pip_size);
     });
 
@@ -275,6 +280,8 @@ export function useScanner() {
       subIdRef.current = null;
     }
     if (shouldSub && subRef.current !== symbol) {
+      fallbackRef.current = false;
+      setLiveSource("SUBSCRICAO");
       client.send({ ticks: symbol, subscribe: 1 });
       subRef.current = symbol;
       lastTickMsRef.current = Date.now();

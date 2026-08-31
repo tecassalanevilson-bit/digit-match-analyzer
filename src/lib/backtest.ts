@@ -9,8 +9,16 @@ export interface SignalRecord {
   window: number;
   condition: "FORTE" | "MODERADA";
   result: "PENDENTE" | "ACERTO" | "ERRO";
+  /** Real quote of the tick at the moment the signal was produced. */
+  price?: string;
+  /** Last digit of the tick at the moment the signal was produced. */
+  signalDigit?: number;
+  /** Digit of the next REAL tick received after the signal. */
   resultDigit?: number;
 }
+
+/** Minimum closed signals before a hit rate may be presented as meaningful. */
+export const MIN_SIGNALS = 100;
 
 const KEY = "digit-scanner-signals-v1";
 const MAX = 500;
@@ -70,5 +78,7 @@ export function totals(records: SignalRecord[]) {
     hits,
     misses: closed.length - hits,
     rate: closed.length ? (hits / closed.length) * 100 : 0,
+    reliable: closed.length >= MIN_SIGNALS,
+    missing: Math.max(0, MIN_SIGNALS - closed.length),
   };
 }
