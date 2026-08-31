@@ -78,6 +78,7 @@ function Index() {
   // Register signals for the real-result backtest (resolved on the next live tick)
   useEffect(() => {
     if (!s.live || !top || condition === "AGUARDAR" || !s.current) return;
+    const lastDigit = s.digits[s.digits.length - 1];
     s.registerSignal({
       symbol: s.current.symbol,
       symbolName: s.current.name,
@@ -87,7 +88,7 @@ function Index() {
       window: s.digits.length,
       condition,
       price: s.lastPrice,
-      signalDigit: s.digits[s.digits.length - 1],
+      ...(lastDigit !== undefined ? { signalDigit: lastDigit } : {}),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.live, s.digits.length, top?.digit, top?.score, condition, s.mode]);
