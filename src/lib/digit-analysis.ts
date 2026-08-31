@@ -36,6 +36,8 @@ export interface Candidate extends DigitStats {
   reasons: string[];
 }
 
+export const SCORE_CAP = 79;
+
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
 /** Única função de cálculo do último dígito (histórico e LIVE). */
@@ -163,7 +165,9 @@ export function scoreMatch(s: DigitStats, sampleSize: number): Candidate {
 
   return {
     ...s,
-    score: Math.round(clamp(score, 0, 100)),
+    // Hard cap: an internal statistical score is never presented as 80%+
+    // "confidence" without historical validation of real results.
+    score: Math.round(clamp(score, 0, SCORE_CAP)),
     breakdown: {
       frequency: Math.round(frequency),
       recent: Math.round(recent),
@@ -211,7 +215,9 @@ export function scoreDiffer(s: DigitStats, sampleSize: number): Candidate {
 
   return {
     ...s,
-    score: Math.round(clamp(score, 0, 100)),
+    // Hard cap: an internal statistical score is never presented as 80%+
+    // "confidence" without historical validation of real results.
+    score: Math.round(clamp(score, 0, SCORE_CAP)),
     breakdown: {
       frequency: Math.round(frequency),
       recent: Math.round(recent),
