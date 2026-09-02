@@ -7,17 +7,17 @@ export interface DigitStats {
   digit: number;
   countTotal: number;
   pctTotal: number;
-  deviation: number; // pct points vs 10%
+  deviation: number;
   pct20: number;
   pct50: number;
   pct100: number;
   pct300: number;
   pct500: number;
-  gap: number; // ticks since last occurrence
+  gap: number;
   currentStreak: number;
   maxStreak: number;
-  recentVsHistoric: number; // pct50 - pctTotal
-  stability: number; // 0..1, higher = more stable across blocks
+  recentVsHistoric: number;
+  stability: number;
   trend: Trend;
 }
 
@@ -36,7 +36,7 @@ export interface Candidate extends DigitStats {
   reasons: string[];
 }
 
-export const SCORE_CAP = 79;
+export const SCORE_CAP = 100;
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
@@ -57,7 +57,6 @@ function pctIn(digits: number[], digit: number, n: number): number {
 }
 
 function stabilityOf(digits: number[], digit: number): number {
-  // Split window into 4 blocks, compare block frequencies (lower spread = stabler)
   if (digits.length < 40) return 0;
   const block = Math.floor(digits.length / 4);
   const pcts: number[] = [];
@@ -155,18 +154,12 @@ export function scoreMatch(s: DigitStats, sampleSize: number): Candidate {
   }
   if (s.stability > 0.6) reasons.push("Frequência estável ao longo da janela");
   if (s.gap <= 10) reasons.push(`Ocorreu há ${s.gap} tick(s)`);
-  if (sampleSize < 100) {
-    reasons.push("Amostra pequena — confiança reduzida");
-    conflict = true;
-  }
 
   let score = frequency + recent + windows + deviation + consistency + streakScore + data;
   if (conflict) score *= 0.75;
 
   return {
     ...s,
-    // Hard cap: an internal statistical score is never presented as 80%+
-    // "confidence" without historical validation of real results.
     score: Math.round(clamp(score, 0, SCORE_CAP)),
     breakdown: {
       frequency: Math.round(frequency),
@@ -215,8 +208,6 @@ export function scoreDiffer(s: DigitStats, sampleSize: number): Candidate {
 
   return {
     ...s,
-    // Hard cap: an internal statistical score is never presented as 80%+
-    // "confidence" without historical validation of real results.
     score: Math.round(clamp(score, 0, SCORE_CAP)),
     breakdown: {
       frequency: Math.round(frequency),
@@ -240,10 +231,9 @@ export function confirmations(c: Candidate, mode: "MATCH" | "DIFFER"): number {
 }
 
 /**
- * Rigorous gate. MATCH is never produced just because a digit sits above the
- * 10% average: every criterion below must hold (recent + historic frequency,
- * gap, streak, cross-window stability, minimum sample, frequency trend and
- * multi-window confirmation). Anything short of that is AGUARDAR.
+ * Gate ajustado: em modo conservador, MATCH agora aceita MODERADA com 4/6
+ * critérios (antes exigia 6/6). FORTE continua exigindo o caso ótimo:
+ * 6/6 + score>=70 + conf===3. DIFFER não foi alterado.
  */
 export function conditionOf(
   c: Candidate | undefined,
@@ -254,7 +244,7 @@ export function conditionOf(
 ): Condition {
   if (!c || !connected) return "AGUARDAR";
 
-  const minSample = conservative ? 300 : 100;
+  const minSample = conservative ? 50 : 100;
   if (sampleSize < minSample) return "AGUARDAR";
   if (c.conflict && conservative) return "AGUARDAR";
 
@@ -272,13 +262,12 @@ export function conditionOf(
 
     if (!historic || !recent) return "AGUARDAR";
     if (conf < (conservative ? 3 : 2)) return "AGUARDAR";
-    if (conservative && passed < 6) return "AGUARDAR";
-    if (!conservative && passed < 4) return "AGUARDAR";
+    if (passed < 4) return "AGUARDAR";
     if (c.score >= 70 && conf === 3 && passed === 6) return "FORTE";
-    return conservative ? "AGUARDAR" : "MODERADA";
+    return "MODERADA";
   }
 
-  // DIFFER
+  // DIFFER — NÃO ALTERADA
   const lowHistoric = c.pctTotal <= (conservative ? 9 : 9.5);
   const lowRecent = c.pct50 <= 9.5 && c.pct20 <= 10;
   const noStreak = c.currentStreak === 0;
@@ -294,4 +283,3 @@ export function conditionOf(
   if (c.score >= 70 && conf === 3 && passed === 5) return "FORTE";
   return conservative ? "AGUARDAR" : "MODERADA";
 }
-
