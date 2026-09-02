@@ -99,6 +99,19 @@ function Index() {
   const history = useMemo(() => [...s.signals].slice(-20).reverse(), [s.signals]);
   const conf = top ? confirmations(top, s.mode) : 0;
 
+  const topDigitStats = useMemo(() => {
+    if (!top) return null;
+    const relevant = s.signals.filter(
+      (r) => r.digit === top.digit && r.mode === s.mode && r.result !== "PENDENTE",
+    );
+    const hits = relevant.filter((r) => r.result === "ACERTO").length;
+    return {
+      total: relevant.length,
+      hits,
+      rate: relevant.length ? (hits / relevant.length) * 100 : 0,
+    };
+  }, [s.signals, top, s.mode]);
+
   return (
     <main className="mx-auto max-w-2xl space-y-3 px-3 py-4 pb-16">
       <header className="panel p-4">
@@ -287,6 +300,14 @@ function Index() {
                 <li key={r}>• {r}</li>
               ))}
             </ul>
+            {topDigitStats && topDigitStats.total > 0 ? (
+              <p className="mt-3 rounded-md bg-surface-2/60 px-3 py-2 text-xs text-muted-foreground">
+                Este dígito ({top.digit}) já gerou{" "}
+                <span className="font-bold text-foreground">{topDigitStats.total}</span> sinal(is){" "}
+                {s.mode} anteriores · <span className="text-success">{topDigitStats.hits}</span> acerto(s) ·{" "}
+                <span className="font-bold text-foreground">{topDigitStats.rate.toFixed(1)}%</span> de taxa
+              </p>
+            ) : null}
             {condition !== "AGUARDAR" ? (
               <div className="mt-3 rounded-lg border border-gold/50 bg-gold/10 p-3 text-xs">
                 <p className="font-bold text-gold">🔔 CONDIÇÃO {condition} DETECTADA</p>
